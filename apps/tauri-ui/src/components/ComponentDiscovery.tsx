@@ -2,6 +2,7 @@ import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open } from '@tauri-apps/plugin-shell'
 import { useEffect, useState } from 'react'
 import { cacheDatasheet, searchComponents, type ComponentCandidate } from '../lib/components'
+import { listParts } from '../lib/library'
 import { PartDetail } from './PartDetail'
 
 type Status = 'idle' | 'searching' | 'error'
@@ -24,12 +25,30 @@ type Status = 'idle' | 'searching' | 'error'
  * every area tab now (App.tsx hides it with CSS instead of
  * unmounting it), same as SchematicAdvisor/BoardAdvisor/EnclosurePanel
  * and for the same reason. `projectName` only resets state on a
- * genuine project switch, mirroring their own established pattern. */
-export function ComponentDiscovery({ projectName }: { projectName: string }) {
+ * genuine project switch, mirroring their own established pattern.
+ *
+ * Real, connected UX gap found by the same live testing: searching
+ * returned candidates with no indication a part was already saved,
+ * so a user re-doing a search for something they'd already confirmed
+ * couldn't tell at a glance -- and once they confirmed it again,
+ * "Save to Library" gated the rest of PartDetail regardless (fixed
+ * separately in PartDetail itself). `onOpenSavedPart`, when provided,
+ * lets an already-saved candidate jump straight to its real Part
+ * Detail via `App.tsx`'s own `partDetail` view -- the exact same
+ * real record `CTX-315.4`'s Library-row click already opens, not a
+ * second, parallel code path. */
+export function ComponentDiscovery({
+  projectName,
+  onOpenSavedPart,
+}: {
+  projectName: string
+  onOpenSavedPart?: (partId: string) => void
+}) {
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState<Status>('idle')
   const [error, setError] = useState<string | null>(null)
   const [candidates, setCandidates] = useState<ComponentCandidate[]>([])
+  const [savedPartIds, setSavedPartIds] = useState<Set<string> | null>(null)
   const [confirmed, setConfirmed] = useState<{
     candidate: ComponentCandidate
     datasheetPath: string | null
@@ -43,6 +62,7 @@ export function ComponentDiscovery({ projectName }: { projectName: string }) {
     setStatus('idle')
     setError(null)
     setCandidates([])
+    setSavedPartIds(null)
     setConfirmed(null)
     setConfirmingPartNumber(null)
     setPathCopied(false)
@@ -78,6 +98,18 @@ export function ComponentDiscovery({ projectName }: { projectName: string }) {
       setCandidates([])
       setError(err instanceof Error ? err.message : String(err))
       setStatus('error')
+      return
+    }
+
+    // Real, fast local lookup (not a network/LLM call), fetched fresh
+    // per search rather than once on mount -- a part saved since the
+    // last search should show up as already-saved too. Best-effort:
+    // a failure here just means no badges render, not a search error.
+    try {
+      const ids = await listParts()
+      setSavedPartIds(new Set(ids))
+    } catch {
+      setSavedPartIds(null)
     }
   }
 
@@ -185,36 +217,53 @@ export function ComponentDiscovery({ projectName }: { projectName: string }) {
       {candidates.length > 0 && (
         <div className="flex flex-col gap-2">
           <p className="text-xs font-medium uppercase text-neutral-500">Did you mean:</p>
-          {candidates.map((candidate) => (
-            <div
-              key={candidate.part_number}
-              className="flex items-center justify-between gap-3 rounded border border-neutral-700 p-3"
-            >
-              <div className="flex flex-col gap-1">
-                <p className="text-sm text-neutral-100">
-                  {candidate.part_number} <span className="text-neutral-500">{candidate.manufacturer}</span>
-                </p>
-                <p className="text-xs text-neutral-500">
-                  {candidate.package} · confidence: {candidate.confidence}
-                </p>
-                <button
-                  type="button"
-                  className="self-start text-xs text-neutral-400 underline"
-                  onClick={() => handleOpen(candidate.datasheet_url)}
-                >
-                  view datasheet
-                </button>
-              </div>
-              <button
-                type="button"
-                className="rounded border border-neutral-700 px-3 py-1 text-xs font-medium disabled:opacity-50"
-                onClick={() => handleConfirm(candidate)}
-                disabled={confirmingPartNumber !== null}
+          {candidates.map((candidate) => {
+            const alreadySaved = savedPartIds?.has(candidate.part_number) ?? false
+            return (
+              <div
+                key={candidate.part_number}
+                className="flex items-center justify-between gap-3 rounded border border-neutral-700 p-3"
               >
-                {confirmingPartNumber === candidate.part_number ? 'Confirming…' : 'This one'}
-              </button>
-            </div>
-          ))}
+                <div className="flex flex-col gap-1">
+                  <p className="text-sm text-neutral-100">
+                    {candidate.part_number} <span className="text-neutral-500">{candidate.manufacturer}</span>
+                    {alreadySaved && (
+                      <span className="ml-2 text-xs font-medium text-emerald-400">Already in your library</span>
+                    )}
+                  </p>
+                  <p className="text-xs text-neutral-500">
+                    {candidate.package} · confidence: {candidate.confidence}
+                  </p>
+                  <button
+                    type="button"
+                    className="self-start text-xs text-neutral-400 underline"
+                    onClick={() => handleOpen(candidate.datasheet_url)}
+                  >
+                    view datasheet
+                  </button>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {alreadySaved && onOpenSavedPart && (
+                    <button
+                      type="button"
+                      className="rounded border border-neutral-700 px-3 py-1 text-xs font-medium"
+                      onClick={() => onOpenSavedPart(candidate.part_number)}
+                    >
+                      Open
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="rounded border border-neutral-700 px-3 py-1 text-xs font-medium disabled:opacity-50"
+                    onClick={() => handleConfirm(candidate)}
+                    disabled={confirmingPartNumber !== null}
+                  >
+                    {confirmingPartNumber === candidate.part_number ? 'Confirming…' : 'This one'}
+                  </button>
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

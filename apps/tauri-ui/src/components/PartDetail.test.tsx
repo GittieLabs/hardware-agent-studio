@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const extractPartDetailMock = vi.fn()
+const loadPartMock = vi.fn()
 const saveConfirmedPartMock = vi.fn()
 const exportSymbolMock = vi.fn()
 const openMock = vi.fn()
@@ -25,6 +26,7 @@ vi.mock('../lib/library', () => ({
 
 vi.mock('../lib/partDetail', () => ({
   extractPartDetail: (...args: unknown[]) => extractPartDetailMock(...args),
+  loadPart: (...args: unknown[]) => loadPartMock(...args),
   saveConfirmedPart: (...args: unknown[]) => saveConfirmedPartMock(...args),
   exportSymbol: (...args: unknown[]) => exportSymbolMock(...args),
   getConnectionGuidance: (...args: unknown[]) => getConnectionGuidanceMock(...args),
@@ -62,6 +64,10 @@ const CANDIDATE = {
 
 beforeEach(() => {
   extractPartDetailMock.mockReset()
+  // Default: no Part with this part_number is saved yet, matching
+  // every existing test's own assumption -- individual tests for the
+  // real "already saved" path override this with mockResolvedValueOnce.
+  loadPartMock.mockReset().mockRejectedValue(new Error('No Part found.'))
   saveConfirmedPartMock.mockReset()
   exportSymbolMock.mockReset()
   openMock.mockReset()
@@ -119,6 +125,40 @@ describe('PartDetail', () => {
     await waitFor(() => screen.getByText('RESET'))
     screen.getByText('bidirectional')
     screen.getAllByText('llm_extraction')
+    expect(extractPartDetailMock).toHaveBeenCalledWith('ATtiny85')
+  })
+
+  it('real bug fix: a candidate that is already saved hydrates directly and skips re-extraction, never showing Save to Library', async () => {
+    // The exact real bug reported: "Save to Library" gated the rest of
+    // PartDetail even when a Part with this part_number was already
+    // saved. loadPart succeeding means it's already saved -- hydrate
+    // from that real record, the same shape the initialPart entry
+    // point already uses, and never call extractPartDetail at all.
+    loadPartMock.mockReset().mockResolvedValueOnce({
+      ...SAVED_PART_NO_FOOTPRINT,
+      pins: [{ number: '1', name: 'RESET', electrical_type: 'bidirectional' }],
+    })
+
+    render(<PartDetail candidate={CANDIDATE} />)
+
+    await waitFor(() => screen.getByText('RESET'))
+    expect(loadPartMock).toHaveBeenCalledWith('ATtiny85')
+    expect(extractPartDetailMock).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Save to Library' })).toBeNull()
+    screen.getByText('Saved to library.')
+  })
+
+  it('a genuinely new candidate (not yet saved) still runs real extraction and shows Save to Library', async () => {
+    // loadPartMock's own default (set in beforeEach) already rejects,
+    // matching "not saved yet" -- this test just makes that real
+    // fallback path explicit and asserts on it directly, rather than
+    // relying on every other test's own implicit coverage of it.
+    extractPartDetailMock.mockResolvedValueOnce({ part_number: 'ATtiny85', package: 'SOIC-8', pins: [] })
+
+    render(<PartDetail candidate={CANDIDATE} />)
+
+    await waitFor(() => screen.getByRole('button', { name: 'Save to Library' }))
+    expect(loadPartMock).toHaveBeenCalledWith('ATtiny85')
     expect(extractPartDetailMock).toHaveBeenCalledWith('ATtiny85')
   })
 

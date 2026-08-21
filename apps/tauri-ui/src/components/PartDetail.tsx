@@ -19,6 +19,7 @@ import {
   extractPartDetail,
   generateDesignGuidance,
   getConnectionGuidance,
+  loadPart,
   saveConfirmedPart,
   type ConnectionGuidance,
   type DesignGuidanceItem,
@@ -220,18 +221,46 @@ export function PartDetail({ candidate, initialPart }: PartDetailProps) {
       }
     }
 
-    setStatus('extracting')
-    extractPartDetail(candidate.part_number)
-      .then((schema) => {
+    // Real bug found by live user testing: "Save to Library" was
+    // required even when a part with this exact part_number was
+    // already saved -- ComponentDiscovery's search/confirm flow had no
+    // awareness a Part might already exist, so every confirmed
+    // candidate ran a fresh SPEC-202 extraction and demanded a fresh
+    // save, no matter how many times the same part had been saved
+    // before. Checks for a real, already-saved record first; if one
+    // exists, hydrates exactly like the `initialPart` entry point above
+    // (same helpers, same shape) and skips extraction entirely. A
+    // "not found" failure here is the expected, common case for a
+    // genuinely new part, not a real error -- falls through to
+    // extraction silently, the same way it always has.
+    const confirmedCandidate = candidate
+
+    async function loadOrExtract() {
+      setStatus('extracting')
+      try {
+        const existing = await loadPart(confirmedCandidate.part_number)
+        if (cancelled) return
+        setExtraction(initialPartToExtraction(existing))
+        setSavedPart(existing)
+        setSavedSymbol(initialPartToSymbol(existing))
+        setStatus('ready')
+        return
+      } catch {
+        // Not saved yet -- fall through to real extraction below.
+      }
+      try {
+        const schema = await extractPartDetail(confirmedCandidate.part_number)
         if (cancelled) return
         setExtraction(schema)
         setStatus('ready')
-      })
-      .catch((err) => {
+      } catch (err) {
         if (cancelled) return
         setError(err instanceof Error ? err.message : String(err))
         setStatus('error')
-      })
+      }
+    }
+
+    void loadOrExtract()
 
     return () => {
       cancelled = true

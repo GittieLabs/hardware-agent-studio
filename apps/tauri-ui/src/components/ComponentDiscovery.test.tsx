@@ -5,10 +5,15 @@ const searchComponentsMock = vi.fn()
 const cacheDatasheetMock = vi.fn()
 const writeTextMock = vi.fn()
 const openMock = vi.fn()
+const listPartsMock = vi.fn()
 
 vi.mock('../lib/components', () => ({
   searchComponents: (...args: unknown[]) => searchComponentsMock(...args),
   cacheDatasheet: (...args: unknown[]) => cacheDatasheetMock(...args),
+}))
+
+vi.mock('../lib/library', () => ({
+  listParts: (...args: unknown[]) => listPartsMock(...args),
 }))
 
 vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({
@@ -40,6 +45,7 @@ beforeEach(() => {
   cacheDatasheetMock.mockReset()
   writeTextMock.mockReset()
   openMock.mockReset()
+  listPartsMock.mockReset().mockResolvedValue([])
 })
 
 describe('ComponentDiscovery', () => {
@@ -240,5 +246,59 @@ describe('ComponentDiscovery', () => {
 
     expect(screen.queryByText(/Confirmed: ATtiny85/)).toBeNull()
     screen.getByPlaceholderText(/search for a part/)
+  })
+
+  it('real bug fix: a search result already saved to the library shows a badge and an Open shortcut', async () => {
+    // The connected real gap the user reported: searching returned
+    // already-saved parts with no indication, so re-finding something
+    // you'd already confirmed looked identical to something brand new.
+    searchComponentsMock.mockResolvedValueOnce([
+      {
+        part_number: 'ATtiny85', manufacturer: 'Microchip', package: 'DIP-8',
+        datasheet_url: 'https://example.com/attiny85.pdf', confidence: 'high', rationale: 'Exact match.',
+      },
+    ])
+    listPartsMock.mockResolvedValueOnce(['ATtiny85'])
+    const onOpenSavedPart = vi.fn()
+
+    render(<ComponentDiscovery projectName="test-project" onOpenSavedPart={onOpenSavedPart} />)
+    search('atiny85')
+
+    await waitFor(() => screen.getByText('Already in your library'))
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }))
+    expect(onOpenSavedPart).toHaveBeenCalledWith('ATtiny85')
+  })
+
+  it('a search result not yet saved shows no badge and no Open shortcut', async () => {
+    searchComponentsMock.mockResolvedValueOnce([
+      {
+        part_number: 'ATtiny85', manufacturer: 'Microchip', package: 'DIP-8',
+        datasheet_url: 'https://example.com/attiny85.pdf', confidence: 'high', rationale: 'Exact match.',
+      },
+    ])
+    listPartsMock.mockResolvedValueOnce([])
+
+    render(<ComponentDiscovery projectName="test-project" onOpenSavedPart={vi.fn()} />)
+    search('atiny85')
+
+    await waitFor(() => screen.getByRole('button', { name: 'This one' }))
+    expect(screen.queryByText('Already in your library')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Open' })).toBeNull()
+  })
+
+  it('without onOpenSavedPart, an already-saved result still shows the badge but no Open button', async () => {
+    searchComponentsMock.mockResolvedValueOnce([
+      {
+        part_number: 'ATtiny85', manufacturer: 'Microchip', package: 'DIP-8',
+        datasheet_url: 'https://example.com/attiny85.pdf', confidence: 'high', rationale: 'Exact match.',
+      },
+    ])
+    listPartsMock.mockResolvedValueOnce(['ATtiny85'])
+
+    render(<ComponentDiscovery projectName="test-project" />)
+    search('atiny85')
+
+    await waitFor(() => screen.getByText('Already in your library'))
+    expect(screen.queryByRole('button', { name: 'Open' })).toBeNull()
   })
 })

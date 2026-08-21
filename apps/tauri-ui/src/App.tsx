@@ -450,7 +450,10 @@ function App() {
              * footprint/connection-guidance work, which will eventually
              * join SchematicAdvisor here. */}
             <div data-testid="components-area" className={view.area === 'components' ? undefined : 'hidden'}>
-              <ComponentDiscovery projectName={view.name} />
+              <ComponentDiscovery
+                projectName={view.name}
+                onOpenSavedPart={(partId) => setView({ kind: 'partDetail', partId })}
+              />
             </div>
             <div data-testid="schematic-area" className={view.area === 'schematic' ? undefined : 'hidden'}>
               <SchematicAdvisor projectName={view.name} menuCommand={menuCommand} />

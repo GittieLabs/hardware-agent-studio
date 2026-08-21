@@ -64,6 +64,11 @@ vi.mock('./lib/settings', () => ({
 
 vi.mock('./lib/library', () => ({
   listLibraries: (...args: unknown[]) => listLibrariesMock(...args),
+  // ComponentDiscovery (real, unstubbed here -- TEST-008b's own point)
+  // imports the same real module for its own "already saved" check;
+  // an empty default keeps that check a real, harmless no-op rather
+  // than an uncaught reference to an undefined mock function.
+  listParts: () => Promise.resolve([]),
 }))
 
 vi.mock('./lib/menu', () => ({
